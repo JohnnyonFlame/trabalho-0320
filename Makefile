@@ -1,5 +1,9 @@
 TARGET=trabalho_0318.exe
-SRC=main.c token.c registro.c misc.c
+ifeq ($(BINARIO),1)
+	SRC=main.c registro_binario.c misc.c
+else
+	SRC=main.c token.c registro.c misc.c
+endif
 CFLAGS=-I.
 CC=gcc
 
