@@ -2,7 +2,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "token.h"
 #include "registro.h"
 #include "misc.h"
 
@@ -39,113 +38,73 @@ static void registro_zera(Registro *reg)
 
 static void registro_escreve(FILE *file, Registro *reg)
 {
-    f_assert(fprintf(file, "reg %i\n", reg->id));
-    int i;
-    for (i=0; i<n_opts; i++)
-    {
-        f_assert(fprintf(file, "\t%s = \"", reg_opts[i]));
-        char *c;
-        for (c = reg->opts[i]; *c != 0; c++)
-        {
-            if (*c == '"')
-            {
-                f_assert(fprintf(file, "\\\""));
-            }
-            else
-                f_assert(fprintf(file, "%c", *c));
-        }
+	long int reg_size = 0;
+	int i;
 
-        f_assert(fprintf(file, "\"\n"));
-    }
+	reg_size += sizeof(reg_size);
+	reg_size += sizeof(reg->id);
+	for (i=0; i<n_opts; i++)
+	{
+		reg_size += sizeof(int);
+		reg_size += (strlen(reg->opts[i]) + 1) * sizeof(reg->opts[0][0]);
+	}
 
-    f_assert(fprintf(file, "\n"));
+	fwrite(&reg_size, sizeof(reg_size), 1, file); //stub
+	fwrite(&reg->id, sizeof(reg->id), 1, file);
+
+	for (i=0; i<n_opts; i++)
+	{
+		int write_sz = (strlen(reg->opts[i]) + 1) * sizeof(reg->opts[0][0]);
+		fwrite(&write_sz, sizeof(write_sz), 1, file);
+		fwrite(reg->opts[i], write_sz, 1, file);
+	}
 }
 
-#define token_match_or_err(tok_id) \
-        if (!token_match(file, &tok, tok_id)) \
-        { \
-            __ERRO("Erro de sintaxe no arquivo:\n"#tok_id" esperado!\n"); \
-            return 0; \
-        }
+#define assert_r(cond) \
+	if (!(cond)) \
+	{ \
+		__ERRO("Indice de registro corrompido!\n"); \
+		return 0; \
+	}
 
-static int registro_ler(FILE *file, Registro *reg)
+static int registro_ler(FILE *file, Registro *reg, int seek_out)
 {
-    Token tok;
+	if (seek_out)
+	{
+		long int sz_reg;
+		if (!fread(&sz_reg, sizeof(sz_reg), 1, file))
+			return 0;
 
-    if (!reg)
-    {
-        __ERRO("Ponteiro nulo em registro_ler.\n");
-        return 0;
-    }
+		fseek(file, sz_reg - sizeof(sz_reg), SEEK_CUR);
+		return 1;
+	}
+	fseek(file, sizeof(long int), SEEK_CUR);
 
-    while (token_readToken(file, &tok))
-    {
-        //Verifica se recebemos sintaxe: reg <i>
-        if ((tok.type == TOKEN_ERR) || (tok.type == TOKEN_EOF))
-            return 0;
-        if (tok.type == TOKEN_NL)
-            continue;
-        if ((tok.type != TOKEN_STRING) || (stricmp("reg", tok.str) != 0))
-        {
-            __ERRO("Erro de sintaxe no arquivo:\nRegistro esperado.\n");
-            printf("tok:: %s\n", tok.str);
-            return 0;
-        }
+	if (!fread(&reg->id, sizeof(reg->id), 1, file))
+		return 0;
 
-        //Leia então a ID do nosso registro
-        token_match_or_err(TOKEN_STRING);
-        if (!sscanf(tok.str, "%i", &reg->id))
-        {
-            __ERRO("Erro de sintaxe no arquivo:\nEndereco esperado.\n");
-            return 0;
-        }
-
-        token_match_or_err(TOKEN_NL);
-        break;
-    }
-
-    while (token_match(file, &tok, TOKEN_STRING))
-    {
-        int i;
-        for (i=0; i<n_opts; i++)
-        {
-            if (stricmp(tok.str, reg_opts[i]) == 0)
-                break;
-        }
-
-        token_match_or_err(TOKEN_EQ);
-        token_match_or_err(TOKEN_STRING);
-        if (strlen(tok.str) > sizeof(reg->opts[0]))
-        {
-            __ERRO("Opcao possui tamanho grande demais!\n");
-            return 0;
-        }
-
-        if (i < n_opts)
-            strcpy(reg->opts[i], tok.str);
-
-        token_match_or_err(TOKEN_NL);
-    }
-
-    if (tok.type == TOKEN_ERR)
-        return 0;
-
-    return 1;
+	int i;
+	for (i=0; i<n_opts; i++)
+	{
+		int read_sz;
+		assert_r(fread((void*)&read_sz, sizeof(int), 1, file));
+		assert_r(fread((void*)&reg->opts[i][0], read_sz, 1, file));
+	}
 }
 
 void registro_listar()
 {
     Registro reg;
-    FILE *test = fopen("lista.txt", "r");
+    FILE *test = fopen("lista.dat", "rb");
     registro_zera(&reg);
 
     if (!test)
     {
-        __ERRO("Nao foi possivel abrir lista.txt\n");
+        __ERRO("Nao foi possivel abrir lista.dat\n");
         return;
     }
 
-    while(registro_ler(test, &reg))
+    while(registro_ler(test, &reg, 0))
     {
         system("cls");
         printf("ID/Registro %i:\n\n", reg.id);
@@ -169,15 +128,15 @@ void registro_contar()
     Registro reg;
     int contagem = 0;
 
-    FILE *test = fopen("lista.txt", "r");
+    FILE *test = fopen("lista.dat", "rb");
 
     if (!test)
     {
-        __ERRO("Nao foi possivel abrir lista.txt\n");
+        __ERRO("Nao foi possivel abrir lista.dat\n");
         return;
     }
 
-    while(registro_ler(test, &reg))
+    while(registro_ler(test, &reg, 1))
     {
         contagem++;
     }
@@ -192,13 +151,13 @@ void registro_contar()
 void registro_inserir()
 {
     system("cls");
-    FILE *f = fopen("lista.txt", "a");
+    FILE *f = fopen("lista.dat", "ab");
     Registro reg;
     int i;
 
     if (!f)
     {
-        __ERRO("Nao foi possivel abrir arquivo lista.txt!\n");
+        __ERRO("Nao foi possivel abrir arquivo lista.dat!\n");
         return;
     }
 
@@ -229,14 +188,14 @@ void registro_deleta()
 
     ler_dados("ID do indice a deletar: ", "%i", &i);
 
-    if (rename("lista.txt", "lista_velha.txt") != 0)
+    if (rename("lista.dat", "lista_velha.dat") != 0)
     {
         __ERRO("Erro renomeando arquivo de indices.\n");
         return;
     }
 
-    old_f = fopen("lista_velha.txt", "r");
-    new_f = fopen("lista.txt", "a");
+    old_f = fopen("lista_velha.dat", "r");
+    new_f = fopen("lista.dat", "a");
 
     if (!old_f)
     {
@@ -246,12 +205,12 @@ void registro_deleta()
 
     if (!new_f)
     {
-        __ERRO("Impossivel abrir lista.txt\n");
+        __ERRO("Impossivel abrir lista.dat\n");
         fclose(old_f);
         return;
     }
 
-    while(registro_ler(old_f, &reg))
+    while(registro_ler(old_f, &reg, 0))
     {
         if (reg.id != i)
             registro_escreve(new_f, &reg);
@@ -261,5 +220,5 @@ void registro_deleta()
     fclose(new_f);
     fclose(old_f);
 
-    unlink("lista_velha.txt");
+    unlink("lista_velha.dat");
 }
